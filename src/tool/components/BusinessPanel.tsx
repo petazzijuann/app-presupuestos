@@ -1,5 +1,6 @@
 /** HERRAMIENTA · "Mi negocio": datos, condiciones por defecto e IVA. */
-import { Banner, Card, NumberInput, Select, TextInput } from '../../kit/ui'
+import { Banner, Button, Card, NumberInput, Select, TextInput } from '../../kit/ui'
+import { businessGaps } from '../calc'
 import { CURRENCY_LIST } from '../money'
 import { TRADES, seedCount } from '../trades'
 import { Chip, Switch, Textarea } from './fields'
@@ -11,12 +12,15 @@ export function BusinessPanel({
   onPatch,
   onSyncCatalog,
   catalogCount,
+  onRerunWizard,
 }: {
   business: Business
   onPatch: (patch: Partial<Business>) => void
   /** Suma al catálogo los ítems de los oficios que se agregaron después. */
   onSyncCatalog: () => void
   catalogCount: number
+  /** Vuelve a abrir el asistente de 3 pasos, sin borrar nada. */
+  onRerunWizard: () => void
 }) {
   const patchTerms = (patch: Partial<Business['terms']>) =>
     onPatch({ terms: { ...business.terms, ...patch } })
@@ -29,10 +33,21 @@ export function BusinessPanel({
     })
 
   const pending = business.trades.reduce((acc, t) => acc + seedCount(t), 0)
+  const gaps = businessGaps(business)
 
   return (
     <div className="space-y-4">
-      <Card title="Mi negocio" subtitle="Es lo que el cliente ve arriba del presupuesto.">
+      <h1 className="font-display text-xl font-bold">Mi negocio</h1>
+
+      {gaps.length > 0 ? (
+        <Banner tone="warn">
+          <span className="min-w-0 flex-1">
+            Te falta {gaps.join(' y ')}. Sin eso, tus presupuestos salen incompletos.
+          </span>
+        </Banner>
+      ) : null}
+
+      <Card title="Datos" subtitle="Es lo que el cliente ve arriba del presupuesto.">
         <div className="space-y-4">
           <TextInput
             label="Nombre o razón social"
@@ -184,6 +199,18 @@ export function BusinessPanel({
             con el prefijo nuevo.
           </Banner>
         </div>
+      </Card>
+
+      <Card
+        title="Asistente de configuración"
+        subtitle="Los tres pasos de la primera vez, por si querés repasarlos."
+      >
+        <Button size="lg" className="w-full" onClick={onRerunWizard}>
+          Volver a ejecutar el asistente
+        </Button>
+        <p className="mt-2 text-xs text-muted">
+          No borra nada: arranca con lo que ya tenés cargado y podés salir cuando quieras.
+        </p>
       </Card>
     </div>
   )

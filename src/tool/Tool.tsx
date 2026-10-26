@@ -13,7 +13,7 @@ import { InstallPrompt } from '../kit/pwa'
 import { useStored } from '../kit/storage'
 import { useTheme } from '../kit/theme'
 import { Banner, Button, Modal, useToast, cx } from '../kit/ui'
-import { STATUS_LABEL } from './calc'
+import { STATUS_LABEL, businessGaps, followUpQuotes } from './calc'
 import {
   duplicateQuote,
   emptyData,
@@ -50,7 +50,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'presupuestos', label: 'Presup.', icon: '📄' },
   { id: 'catalogo', label: 'Catálogo', icon: '📋' },
   { id: 'clientes', label: 'Clientes', icon: '👤' },
-  { id: 'negocio', label: 'Negocio', icon: '🔧' },
+  { id: 'negocio', label: 'Mi negocio', icon: '🔧' },
 ]
 
 export function Tool() {
@@ -63,6 +63,8 @@ export function Tool() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [toDelete, setToDelete] = useState<Quote | null>(null)
   const [busy, setBusy] = useState(false)
+  /** true mientras el asistente se abre desde "Mi negocio" y no por primera vez. */
+  const [rerunWizard, setRerunWizard] = useState(false)
   const migrated = useRef(false)
 
   // Normaliza una sola vez lo que había guardado (o lo que se importó).
@@ -91,6 +93,8 @@ export function Tool() {
     update((d) => ({ ...d, quotes: d.quotes.map((q) => (q.id === id ? { ...q, ...patch } : q)) }))
 
   const atLimit = quotes.length >= limits.maxRecords
+  const gaps = businessGaps(business)
+  const pendingFollowUp = followUpQuotes(quotes)
 
   /* ------------------------------ Presupuestos ------------------------------ */
 
@@ -124,11 +128,15 @@ export function Tool() {
     }))
   }
 
+  /** Ítems de los oficios elegidos que todavía no están en el catálogo. */
+  function missingSeeds(current: CatalogItem[], trades: Business['trades']) {
+    const have = new Set(current.map((i) => `${i.kind}|${i.name.toLowerCase()}`))
+    return seedCatalog(trades, uid).filter((s) => !have.has(`${s.kind}|${s.name.toLowerCase()}`))
+  }
+
   /** Suma al catálogo los ítems de los oficios elegidos que todavía no estén. */
   function syncCatalog() {
-    const seeds = seedCatalog(business.trades, uid)
-    const have = new Set(catalog.map((i) => `${i.kind}|${i.name.toLowerCase()}`))
-    const missing = seeds.filter((s) => !have.has(`${s.kind}|${s.name.toLowerCase()}`))
+    const missing = missingSeeds(catalog, business.trades)
     if (!missing.length) {
       toast('Ya tenías todos los ítems de tus oficios.')
       return
@@ -265,16 +273,30 @@ export function Tool() {
         <Onboarding
           business={business}
           onPatch={patchBusiness}
+          onExit={
+            rerunWizard
+              ? () => {
+                  update((d) => ({ ...d, onboarded: true }))
+                  setRerunWizard(false)
+                  setTab('negocio')
+                }
+              : undefined
+          }
           onFinish={() => {
-            const seeds = seedCatalog(business.trades, uid)
+            // Si se agregó un oficio, entran sus ítems; los que ya estaban no se duplican.
+            const missing = missingSeeds(catalog, business.trades)
             update((d) => ({
               ...d,
               onboarded: true,
-              catalog: d.catalog.length ? d.catalog : seeds,
+              catalog: [...d.catalog, ...missing],
             }))
+            if (rerunWizard) {
+              setRerunWizard(false)
+              setTab('negocio')
+            }
             toast(
-              seeds.length
-                ? `Listo. Te dejamos ${seeds.length} ítems en el catálogo para ponerles precio.`
+              missing.length
+                ? `Listo. Te dejamos ${missing.length} ítems en el catálogo para ponerles precio.`
                 : 'Listo, ya podés presupuestar.'
             )
           }}
@@ -308,6 +330,19 @@ export function Tool() {
         {notice ? (
           <Banner tone="warn" className="mt-3">
             {notice}
+          </Banner>
+        ) : null}
+
+        {/* El negocio incompleto se avisa desde cualquier pantalla: es lo que
+            el cliente ve arriba del presupuesto. */}
+        {gaps.length > 0 && tab !== 'negocio' ? (
+          <Banner tone="warn" className="mt-3">
+            <span className="min-w-0 flex-1">
+              Completa los datos de tu negocio para que aparezcan en tus presupuestos.
+            </span>
+            <Button size="sm" variant="primary" onClick={() => setTab('negocio')}>
+              Completar
+            </Button>
           </Banner>
         ) : null}
 
@@ -390,6 +425,10 @@ export function Tool() {
               onPatch={patchBusiness}
               onSyncCatalog={syncCatalog}
               catalogCount={catalog.length}
+              onRerunWizard={() => {
+                setRerunWizard(true)
+                update((d) => ({ ...d, onboarded: false }))
+              }}
             />
           ) : null}
         </div>
@@ -403,10 +442,15 @@ export function Tool() {
         <div className="mx-auto grid w-full max-w-3xl grid-cols-4">
           {TABS.map((t) => {
             const active = tab === t.id
+            // El seguimiento pendiente se ve desde cualquier pantalla.
+            const badge = t.id === 'presupuestos' ? pendingFollowUp.length : 0
             return (
               <button
                 key={t.id}
                 aria-current={active ? 'page' : undefined}
+                aria-label={
+                  badge > 0 ? `${t.label} · ${badge} para seguir` : undefined
+                }
                 onClick={() => {
                   setTab(t.id)
                   if (t.id === 'presupuestos' && tab === 'presupuestos') setOpenId(null)
@@ -416,10 +460,15 @@ export function Tool() {
                   active ? 'text-brand' : 'text-muted hover:text-ink'
                 )}
               >
-                <span className="text-xl leading-none" aria-hidden="true">
+                <span className="relative text-xl leading-none" aria-hidden="true">
                   {t.icon}
+                  {badge > 0 ? (
+                    <span className="absolute -right-2.5 -top-1 grid min-w-4 place-items-center rounded-full bg-warn px-1 text-[10px] font-bold leading-4 text-bg">
+                      {badge}
+                    </span>
+                  ) : null}
                 </span>
-                <span className="truncate">{t.label}</span>
+                <span className="w-full truncate px-0.5">{t.label}</span>
               </button>
             )
           })}

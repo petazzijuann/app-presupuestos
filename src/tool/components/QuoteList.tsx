@@ -1,17 +1,18 @@
 /** HERRAMIENTA · Lista de presupuestos, filtros, resumen del mes y estado vacío. */
 import { useMemo, useState } from 'react'
-import { Button, Card, cx } from '../../kit/ui'
+import { Banner, Button, Card, cx } from '../../kit/ui'
 import {
   STATUS_LABEL,
   STATUS_ORDER,
   daysSinceSent,
+  followUpQuotes,
   formatDate,
   monthSummary,
   needsFollowUp,
   quoteTotals,
 } from '../calc'
 import { formatMoney, formatPercent, type CurrencyCode } from '../money'
-import { Chip, Row, Stat } from './fields'
+import { Chip, Stat } from './fields'
 import type { Client, Quote, QuoteStatus, Template } from '../types'
 
 const TONES: Record<QuoteStatus, string> = {
@@ -51,7 +52,7 @@ const MONTHS = [
   'diciembre',
 ]
 
-type Filter = 'todos' | QuoteStatus
+type Filter = 'todos' | 'seguir' | QuoteStatus
 
 export function QuoteList({
   quotes,
@@ -84,18 +85,26 @@ export function QuoteList({
   const clientName = (id: string | null) =>
     clients.find((c) => c.id === id)?.name ?? 'Sin cliente'
 
+  const pendingFollowUp = useMemo(() => followUpQuotes(quotes), [quotes])
+
   const counts = useMemo(() => {
-    const map = new Map<Filter, number>([['todos', quotes.length]])
+    const map = new Map<Filter, number>([
+      ['todos', quotes.length],
+      ['seguir', pendingFollowUp.length],
+    ])
     for (const s of STATUS_ORDER) map.set(s, quotes.filter((q) => q.status === s).length)
     return map
-  }, [quotes])
+  }, [quotes, pendingFollowUp])
 
   const shown = useMemo(() => {
-    const list = filter === 'todos' ? quotes : quotes.filter((q) => q.status === filter)
+    const list =
+      filter === 'todos'
+        ? quotes
+        : filter === 'seguir'
+          ? pendingFollowUp
+          : quotes.filter((q) => q.status === filter)
     return [...list].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
-  }, [quotes, filter])
-
-  const pendingFollowUp = useMemo(() => quotes.filter((q) => needsFollowUp(q)), [quotes])
+  }, [quotes, filter, pendingFollowUp])
 
   return (
     <div className="space-y-4">
@@ -130,34 +139,17 @@ export function QuoteList({
         </p>
       </Card>
 
-      {pendingFollowUp.length > 0 ? (
-        <Card title="Para hacer seguimiento" subtitle="Enviados hace 3 días o más, sin respuesta.">
-          <ul className="space-y-2">
-            {pendingFollowUp.map((q) => (
-              <li
-                key={q.id}
-                className="rounded-xl border border-warn/40 bg-warn-soft p-3"
-              >
-                <span className="block min-w-0">
-                  <span className="block truncate text-sm font-semibold text-ink">
-                    {q.number} · {clientName(q.clientId)}
-                  </span>
-                  <span className="block text-xs text-muted">
-                    Hace {daysSinceSent(q)} días · {money(quoteTotals(q).total)}
-                  </span>
-                </span>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="mt-2 w-full"
-                  onClick={() => onFollowUp(q)}
-                >
-                  Hacer seguimiento
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </Card>
+      {pendingFollowUp.length > 0 && filter !== 'seguir' ? (
+        <Banner tone="warn">
+          <span className="min-w-0 flex-1">
+            {pendingFollowUp.length === 1
+              ? 'Hay 1 presupuesto enviado sin respuesta.'
+              : `Hay ${pendingFollowUp.length} presupuestos enviados sin respuesta.`}
+          </span>
+          <Button size="sm" variant="primary" onClick={() => setFilter('seguir')}>
+            Ver cuáles
+          </Button>
+        </Banner>
       ) : null}
 
       {templates.length > 0 ? (
@@ -190,30 +182,72 @@ export function QuoteList({
       {/* Filtros: se desplazan en horizontal sin mover la página */}
       <div className="-mx-3 overflow-x-auto px-3 pb-1 sm:mx-0 sm:px-0">
         <div className="flex w-max gap-2">
-          {(['todos', ...STATUS_ORDER] as Filter[]).map((f) => (
-            <Chip
-              key={f}
-              active={filter === f}
-              onClick={() => setFilter(f)}
-              className="shrink-0 whitespace-nowrap"
-            >
-              {f === 'todos' ? 'Todos' : STATUS_LABEL[f]} ({counts.get(f) ?? 0})
-            </Chip>
-          ))}
+          {(['todos', 'seguir', ...STATUS_ORDER] as Filter[]).map((f) => {
+            const n = counts.get(f) ?? 0
+            if (f === 'seguir') {
+              return (
+                <Chip
+                  key={f}
+                  active={filter === f}
+                  onClick={() => setFilter(f)}
+                  className="shrink-0 gap-1.5 whitespace-nowrap"
+                >
+                  Para seguir
+                  <span
+                    className={cx(
+                      'ml-1 inline-block min-w-5 rounded-full px-1.5 py-0.5 text-xs font-bold',
+                      filter === f
+                        ? 'bg-on-brand/20 text-on-brand'
+                        : n > 0
+                          ? 'bg-warn text-bg'
+                          : 'bg-surface-2 text-muted'
+                    )}
+                  >
+                    {n}
+                  </span>
+                </Chip>
+              )
+            }
+            return (
+              <Chip
+                key={f}
+                active={filter === f}
+                onClick={() => setFilter(f)}
+                className="shrink-0 whitespace-nowrap"
+              >
+                {f === 'todos' ? 'Todos' : STATUS_LABEL[f]} ({n})
+              </Chip>
+            )
+          })}
         </div>
       </div>
 
       {shown.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted">
-          No hay presupuestos {filter === 'todos' ? '' : `en «${STATUS_LABEL[filter as QuoteStatus]}»`}.
+          {filter === 'seguir'
+            ? 'Nada para seguir: no hay presupuestos enviados hace 3 días o más sin respuesta.'
+            : `No hay presupuestos ${
+                filter === 'todos' ? '' : `en «${STATUS_LABEL[filter as QuoteStatus]}»`
+              }.`}
         </p>
       ) : (
         <ul className="space-y-2">
           {shown.map((q) => {
             const total = quoteTotals(q).total
+            const seguir = needsFollowUp(q)
             return (
-              <li key={q.id}>
-                <Row onClick={() => onOpen(q.id)}>
+              <li
+                key={q.id}
+                className="overflow-hidden rounded-xl border border-line bg-surface"
+              >
+                {/* El botón de seguimiento no puede ir dentro del de abrir:
+                    un botón adentro de otro es HTML inválido y en el celular
+                    se vuelve imposible de tocar sin abrir la ficha. */}
+                <button
+                  type="button"
+                  onClick={() => onOpen(q.id)}
+                  className="w-full p-3 text-left hover:bg-surface-2"
+                >
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-2 text-sm font-semibold text-ink">
@@ -232,12 +266,20 @@ export function QuoteList({
                       <p className="mt-1">
                         <StatusBadge status={q.status} />
                       </p>
-                      {needsFollowUp(q) ? (
-                        <p className="mt-1 text-[11px] font-semibold text-warn">Sin respuesta</p>
-                      ) : null}
                     </div>
                   </div>
-                </Row>
+                </button>
+
+                {seguir ? (
+                  <div className="flex flex-wrap items-center gap-2 border-t border-warn/40 bg-warn-soft px-3 py-2">
+                    <span className="min-w-0 flex-1 text-xs font-medium text-ink">
+                      Sin respuesta hace {daysSinceSent(q)} días
+                    </span>
+                    <Button size="sm" variant="primary" onClick={() => onFollowUp(q)}>
+                      Hacer seguimiento
+                    </Button>
+                  </div>
+                ) : null}
               </li>
             )
           })}

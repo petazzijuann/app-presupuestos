@@ -3,6 +3,7 @@
  * puras y testeadas. Ningún componente de React hace cuentas por su cuenta.
  */
 import type {
+  Business,
   CatalogItem,
   DiscountKind,
   ItemKind,
@@ -188,6 +189,29 @@ export function needsFollowUp(
   if (quote.status !== 'enviado') return false
   const since = daysSinceSent(quote, now)
   return since !== null && since >= days
+}
+
+/** Los presupuestos que están esperando respuesta hace demasiado. */
+export function followUpQuotes<T extends Pick<Quote, 'status' | 'statusAt'>>(
+  quotes: T[],
+  now = Date.now(),
+  days = FOLLOW_UP_DAYS
+): T[] {
+  return quotes.filter((q) => needsFollowUp(q, now, days))
+}
+
+/* ------------------------------- Datos del negocio ------------------------------- */
+
+/**
+ * Qué le falta al negocio para que el presupuesto salga presentable.
+ * Sin nombre no hay encabezado; sin teléfono no se puede enviar ni seguir
+ * por WhatsApp, que es por donde viaja todo.
+ */
+export function businessGaps(business: Pick<Business, 'name' | 'phone'>): string[] {
+  const gaps: string[] = []
+  if (!business.name?.trim()) gaps.push('el nombre')
+  if (!business.phone?.trim()) gaps.push('el WhatsApp')
+  return gaps
 }
 
 /* ---------------------------------- Estados ---------------------------------- */

@@ -3,6 +3,8 @@ import {
   DAY,
   FOLLOW_UP_DAYS,
   bumpPrices,
+  businessGaps,
+  followUpQuotes,
   categoriesOf,
   daysSinceSent,
   discountAmount,
@@ -19,6 +21,7 @@ import {
   subtotalByKind,
   validUntil,
 } from './calc'
+import { sampleData } from './defaults'
 import type { CatalogItem, Quote, QuoteLine, QuoteStatus } from './types'
 
 /* ------------------------------- Ayudantes ------------------------------- */
@@ -303,6 +306,51 @@ describe('seguimiento a los 3 días', () => {
   it('el umbral se puede cambiar', () => {
     expect(needsFollowUp(sent(5), now, 7)).toBe(false)
     expect(needsFollowUp(sent(5), now, 5)).toBe(true)
+  })
+
+  it('followUpQuotes junta solo los que esperan respuesta', () => {
+    const lista = [
+      quote({ id: 'a', status: 'enviado', statusAt: { enviado: now - 4 * DAY } }),
+      quote({ id: 'b', status: 'enviado', statusAt: { enviado: now - 1 * DAY } }),
+      quote({ id: 'c', status: 'aceptado', statusAt: { enviado: now - 9 * DAY } }),
+      quote({ id: 'd', status: 'borrador', statusAt: {} }),
+      quote({ id: 'e', status: 'enviado', statusAt: { enviado: now - 30 * DAY } }),
+    ]
+    expect(followUpQuotes(lista, now).map((q) => q.id)).toEqual(['a', 'e'])
+  })
+
+  it('sin presupuestos no hay nada para seguir', () => {
+    expect(followUpQuotes([], now)).toEqual([])
+  })
+
+  it('el ejemplo trae un presupuesto enviado listo para seguir', () => {
+    const data = sampleData(now)
+    const pendientes = followUpQuotes(data.quotes, now)
+    expect(pendientes).toHaveLength(1)
+    expect(pendientes[0].status).toBe('enviado')
+    // Enviado hace 4 días: pasa el umbral de 3 con margen visible.
+    expect(daysSinceSent(pendientes[0], now)).toBe(4)
+    // Y tiene teléfono del cliente, que es lo que necesita el link de WhatsApp.
+    const cliente = data.clients.find((c) => c.id === pendientes[0].clientId)
+    expect(cliente?.phone).toBeTruthy()
+  })
+})
+
+/* --------------------------- Datos del negocio --------------------------- */
+
+describe('datos del negocio', () => {
+  it('avisa lo que falta para que el presupuesto salga presentable', () => {
+    expect(businessGaps({ name: '', phone: '' })).toEqual(['el nombre', 'el WhatsApp'])
+    expect(businessGaps({ name: 'Gas Soto', phone: '' })).toEqual(['el WhatsApp'])
+    expect(businessGaps({ name: '', phone: '1155667788' })).toEqual(['el nombre'])
+  })
+
+  it('no se conforma con espacios en blanco', () => {
+    expect(businessGaps({ name: '   ', phone: '  ' })).toEqual(['el nombre', 'el WhatsApp'])
+  })
+
+  it('con nombre y WhatsApp no falta nada', () => {
+    expect(businessGaps({ name: 'Gas Soto', phone: '1155667788' })).toEqual([])
   })
 })
 

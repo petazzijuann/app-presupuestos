@@ -265,8 +265,8 @@ export function sampleData(now = Date.now()): AppData {
       statusAt: { borrador: now - 9 * DAY, enviado: now - 8 * DAY, aceptado: now - 5 * DAY },
     }),
     base(3, {
-      date: today(now - 6 * DAY),
-      createdAt: now - 6 * DAY,
+      date: today(now - 5 * DAY),
+      createdAt: now - 5 * DAY,
       clientId: clients[0].id,
       address: 'Av. Cabildo 2340, 5.º B, CABA',
       description: 'Dos bocas nuevas en la cocina y cambio de la térmica que salta.',
@@ -278,9 +278,9 @@ export function sampleData(now = Date.now()): AppData {
       ],
       depositPercent: 0,
       leadTime: 'Una mañana de trabajo.',
-      // Enviado hace 5 días: la lista lo va a marcar para hacer seguimiento.
+      // Enviado hace 4 días: la lista lo marca para hacer seguimiento.
       status: 'enviado',
-      statusAt: { borrador: now - 6 * DAY, enviado: now - 5 * DAY },
+      statusAt: { borrador: now - 5 * DAY, enviado: now - 4 * DAY },
     }),
     base(4, {
       date: today(now),

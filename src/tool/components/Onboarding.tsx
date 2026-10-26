@@ -18,10 +18,13 @@ export function Onboarding({
   business,
   onPatch,
   onFinish,
+  onExit,
 }: {
   business: Business
   onPatch: (patch: Partial<Business>) => void
   onFinish: () => void
+  /** Solo cuando se vuelve a correr desde "Mi negocio": deja salir sin terminar. */
+  onExit?: () => void
 }) {
   const [step, setStep] = useState(0)
 
@@ -45,10 +48,19 @@ export function Onboarding({
     <div className="mx-auto w-full max-w-lg px-3 pb-16 pt-6 sm:px-4">
       <div className="mb-5 flex items-center gap-3">
         <Logo size={34} />
-        <div className="min-w-0">
-          <h1 className="font-display text-xl font-bold leading-tight">Vamos a configurarte</h1>
-          <p className="text-sm text-muted">Tres pasos y ya podés presupuestar.</p>
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display text-xl font-bold leading-tight">
+            {onExit ? 'Mi negocio' : 'Vamos a configurarte'}
+          </h1>
+          <p className="text-sm text-muted">
+            {onExit ? 'Repasá los tres pasos.' : 'Tres pasos y ya podés presupuestar.'}
+          </p>
         </div>
+        {onExit ? (
+          <Button variant="ghost" size="sm" onClick={onExit} className="shrink-0">
+            Salir
+          </Button>
+        ) : null}
       </div>
 
       <ol className="mb-5 grid grid-cols-3 gap-1.5" aria-label="Pasos">
@@ -206,7 +218,7 @@ export function Onboarding({
           onClick={() => (step < 2 ? setStep((s) => s + 1) : onFinish())}
           className="flex-[2]"
         >
-          {step < 2 ? 'Seguir' : 'Empezar a presupuestar'}
+          {step < 2 ? 'Seguir' : onExit ? 'Guardar y salir' : 'Empezar a presupuestar'}
         </Button>
       </div>
       {step === 0 && !canContinue ? (
