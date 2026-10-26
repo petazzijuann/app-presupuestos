@@ -2,7 +2,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { config } from '../config'
 import { useAccess, useLimits } from './access'
-import { downloadBackup, ImportError, importBackupFile, pickFile } from './backup'
+import {
+  downloadBackup,
+  formatBytes,
+  HEAVY_BACKUP_BYTES,
+  ImportError,
+  importBackupFile,
+  pickFile,
+} from './backup'
 import { Logo } from './Logo'
 import { Button, Modal, useToast, cx } from './ui'
 
@@ -37,6 +44,17 @@ export function Header({ right }: { right?: React.ReactNode }) {
     }
   }, [open])
 
+  async function onExport() {
+    const bytes = await downloadBackup()
+    if (bytes >= HEAVY_BACKUP_BYTES) {
+      toast(
+        `Copia descargada (${formatBytes(bytes)}). Pesa bastante por las fotos: guardala en la computadora o en la nube.`
+      )
+    } else {
+      toast(`Descargamos tu copia de seguridad (${formatBytes(bytes)}).`)
+    }
+  }
+
   async function onImport() {
     const file = await pickFile()
     if (!file) return
@@ -55,8 +73,7 @@ export function Header({ right }: { right?: React.ReactNode }) {
       disabled: !limits.canExport,
       onClick: () => {
         if (!limits.canExport) return toast('Exportar está disponible en la versión completa.', 'danger')
-        downloadBackup()
-        toast('Descargamos tu copia de seguridad.')
+        void onExport().catch(() => toast('No pudimos armar la copia.', 'danger'))
       },
     },
     {

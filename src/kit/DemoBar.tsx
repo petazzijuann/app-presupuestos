@@ -13,7 +13,7 @@ export function DemoBar() {
     <div className="no-print sticky top-0 z-40 bg-brand text-on-brand">
       <div className="mx-auto flex w-full max-w-5xl items-center gap-3 px-3 py-2 text-sm sm:px-4">
         <p className="min-w-0 flex-1 truncate font-medium">
-          Estás en la demo · hasta {config.demo.maxProducts} productos
+          Estás en la demo · hasta {config.demo.maxRecords} {config.demo.recordLabel}
         </p>
         {buyUrl ? (
           <a

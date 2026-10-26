@@ -6,3 +6,6 @@ dev-dist
 .DS_Store
 *.log
 .wrangler
+
+# Caché incremental de TypeScript (salida de build)
+*.tsbuildinfo

@@ -18,8 +18,9 @@ export function BackupReminder({ hasData }: { hasData: boolean }) {
         size="sm"
         variant="primary"
         onClick={() => {
-          downloadBackup()
-          toast('Descargamos tu copia de seguridad.')
+          void downloadBackup()
+            .then(() => toast('Descargamos tu copia de seguridad.'))
+            .catch(() => toast('No pudimos armar la copia.', 'danger'))
           setHidden(true)
         }}
       >

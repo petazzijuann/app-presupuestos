@@ -1,0 +1,22 @@
+# Configuración de Cloudflare Pages para la microapp Presupuestos.
+#
+# OJO: al existir este archivo en la raíz, Pages lo toma como única fuente de
+# verdad para el nombre, los bindings y las variables NO secretas. Lo que se
+# cargue en el panel y no esté acá deja de aplicarse. Los secretos
+# (LS_PRODUCT_ID, ADMIN_TOKEN) y las VITE_* del build siguen en el panel.
+#
+# Local:  npm run build && npx wrangler pages dev dist
+name = "app-presupuestos"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-10-01"
+
+[vars]
+PRODUCT_ID = "presupuestos"
+MAX_DEVICES = "3"
+# LS_PRODUCT_ID y ADMIN_TOKEN se cargan como secretos en el panel de Pages.
+
+# Mismo namespace de licencias que app-costos: una sola base de claves para
+# todas las microapps, separadas por PRODUCT_ID.
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "73b4fa6f7ed040b794c860f97e7fe537"

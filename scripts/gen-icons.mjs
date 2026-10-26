@@ -11,8 +11,12 @@
 import { deflateSync, inflateSync } from 'node:zlib'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
-/** Navy del logo (--fl-ink): fondo de los íconos en ambos temas. */
+/** Navy del logo (--fl-ink): fondo de los íconos, igual que en el resto de la familia. */
 const BG = [11, 23, 54]
+/** Acento propio de Presupuestos (--fl-brand) y menta de la marca (--fl-signal). */
+const ACCENT = [226, 125, 42]
+const SIGNAL = [16, 224, 184]
+const PAPER = [246, 248, 251]
 const SOURCE = 'src/assets/brand/futurislabs-icon.png'
 
 /* ------------------------------ PNG: leer ------------------------------ */
@@ -260,18 +264,92 @@ function icon(logo, size, { maskable }) {
   return encodePNG(canvas)
 }
 
+
+/* -------------------------- Glifo de Presupuestos -------------------------- */
+
+/** Rectángulo redondeado con antialias, pintado sobre el lienzo. */
+function fillRoundedRect(canvas, x, y, w, h, radius, color, alpha = 1) {
+  const SS = 4
+  const r = Math.min(radius, w / 2, h / 2)
+  for (let py = Math.max(0, Math.floor(y)); py < Math.min(canvas.height, Math.ceil(y + h)); py++) {
+    for (let px = Math.max(0, Math.floor(x)); px < Math.min(canvas.width, Math.ceil(x + w)); px++) {
+      let cover = 0
+      for (let j = 0; j < SS; j++) {
+        for (let i = 0; i < SS; i++) {
+          const sx = px + (i + 0.5) / SS
+          const sy = py + (j + 0.5) / SS
+          if (sx < x || sx > x + w || sy < y || sy > y + h) continue
+          const cx = Math.min(Math.max(sx, x + r), x + w - r)
+          const cy = Math.min(Math.max(sy, y + r), y + h - r)
+          const dx = sx - cx
+          const dy = sy - cy
+          if (dx * dx + dy * dy <= r * r) cover++
+        }
+      }
+      if (!cover) continue
+      const a = (cover / (SS * SS)) * alpha
+      const d = (py * canvas.width + px) * 4
+      const da = canvas.data[d + 3] / 255
+      const oa = a + da * (1 - a)
+      for (let k = 0; k < 3; k++) {
+        canvas.data[d + k] = Math.round((color[k] * a + canvas.data[d + k] * da * (1 - a)) / oa)
+      }
+      canvas.data[d + 3] = Math.round(oa * 255)
+    }
+  }
+}
+
+/**
+ * Ícono propio de la microapp: una hoja de presupuesto con el encabezado en el
+ * naranja de obra, los renglones del detalle y el total resaltado en menta.
+ * Se dibuja con rectángulos para no depender de ningún asset extra.
+ */
+function quoteIcon(size, { maskable }) {
+  // En maskable el sistema puede recortar hasta un 20 % de cada lado.
+  const ratio = maskable ? 0.54 : 0.68
+  const canvas = canvasWithBackground(size, maskable ? 0 : size * 0.22)
+
+  const sheetW = size * ratio * 0.8
+  const sheetH = size * ratio
+  const x = (size - sheetW) / 2
+  const y = (size - sheetH) / 2
+  const u = sheetH / 100 // unidad relativa: todo escala con la hoja
+
+  fillRoundedRect(canvas, x, y, sheetW, sheetH, u * 9, PAPER)
+  // Banda del encabezado (el "Presupuesto P-0001").
+  fillRoundedRect(canvas, x, y, sheetW, u * 22, u * 9, ACCENT)
+  fillRoundedRect(canvas, x, y + u * 13, sheetW, u * 9, 0, ACCENT)
+
+  // Renglones del detalle.
+  const pad = u * 12
+  const lineW = sheetW - pad * 2
+  const rows = [
+    [0.0, 0.62],
+    [0.16, 0.86],
+    [0.32, 0.72],
+  ]
+  for (const [offset, width] of rows) {
+    fillRoundedRect(canvas, x + pad, y + u * (34 + offset * 100), lineW * width, u * 7, u * 3.5, BG, 0.3)
+  }
+  // Total, en la menta de la marca.
+  fillRoundedRect(canvas, x + pad, y + u * 76, lineW * 0.5, u * 10, u * 5, SIGNAL)
+
+  return encodePNG(canvas)
+}
+
 /* ------------------------------- Salidas ------------------------------- */
 
 const logo = trim(decodePNG(readFileSync(SOURCE)))
 mkdirSync('public/icons', { recursive: true })
 mkdirSync('public/brand', { recursive: true })
 
+// Íconos de la app: el glifo propio de Presupuestos.
 for (const size of [192, 512]) {
-  writeFileSync(`public/icons/icon-${size}.png`, icon(logo, size, { maskable: false }))
-  writeFileSync(`public/icons/maskable-${size}.png`, icon(logo, size, { maskable: true }))
+  writeFileSync(`public/icons/icon-${size}.png`, quoteIcon(size, { maskable: false }))
+  writeFileSync(`public/icons/maskable-${size}.png`, quoteIcon(size, { maskable: true }))
 }
-writeFileSync('public/apple-touch-icon.png', icon(logo, 180, { maskable: false }))
-writeFileSync('public/favicon-32.png', icon(logo, 32, { maskable: false }))
+writeFileSync('public/apple-touch-icon.png', quoteIcon(180, { maskable: false }))
+writeFileSync('public/favicon-32.png', quoteIcon(32, { maskable: false }))
 
 // Logo con fondo transparente para la interfaz (header y pantalla de licencia).
 for (const size of [64, 128]) {
@@ -282,4 +360,7 @@ for (const size of [64, 128]) {
   )
 }
 
-console.log(`Íconos generados desde ${SOURCE} (logo ${logo.width}×${logo.height})`)
+console.log(
+  `Íconos de Presupuestos generados (glifo propio) + logo de interfaz desde ${SOURCE} ` +
+    `(${logo.width}×${logo.height})`
+)

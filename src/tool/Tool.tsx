@@ -1,27 +1,57 @@
 /**
- * HERRAMIENTA · Calculadora de costos y precio de venta.
+ * HERRAMIENTA · Presupuestos para oficios.
  * Es lo único que cambia entre microapps: el kit (licencia, demo, datos,
- * layout) vive en src/kit y no debería tocarse.
+ * layout) vive en src/kit y casi no se toca.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccess, useLimits } from '../kit/access'
 import { BackupReminder } from '../kit/BackupReminder'
+import { registerBackupExtra } from '../kit/backup'
 import { DemoBar } from '../kit/DemoBar'
 import { Header } from '../kit/Header'
 import { InstallPrompt } from '../kit/pwa'
 import { useStored } from '../kit/storage'
 import { useTheme } from '../kit/theme'
 import { Banner, Button, Modal, useToast, cx } from '../kit/ui'
-import { summarize } from './calc'
-import { emptyData, migrate, newProduct, sampleData, uid } from './defaults'
-import { ProductEditor } from './components/ProductEditor'
-import { EmptyState, ProductList } from './components/ProductList'
-import { PricePanel } from './components/PricePanel'
-import { ProductSheet } from './components/ProductSheet'
-import { SettingsPanel } from './components/SettingsPanel'
-import type { AppData, Product } from './types'
+import { STATUS_LABEL } from './calc'
+import {
+  duplicateQuote,
+  emptyData,
+  migrate,
+  newQuote,
+  quoteFromTemplate,
+  sampleData,
+  templateFromQuote,
+  uid,
+} from './defaults'
+import { allImages, getImage, getImages, pruneImages, restoreImages } from './images'
+import { buildQuotePdf, buildReceiptPdf, type PdfResult } from './pdf'
+import {
+  copyText,
+  downloadBlob,
+  followUpMessage,
+  openWhatsApp,
+  quoteSummaryText,
+  sendMessage,
+  sharePdf,
+} from './share'
+import { seedCatalog } from './trades'
+import { BusinessPanel } from './components/BusinessPanel'
+import { CatalogPanel } from './components/CatalogPanel'
+import { ClientsPanel } from './components/ClientsPanel'
+import { Onboarding } from './components/Onboarding'
+import { QuoteEditor, type QuoteActions } from './components/QuoteEditor'
+import { EmptyState, QuoteList } from './components/QuoteList'
+import type { AppData, Business, CatalogItem, Client, Quote, QuoteLine } from './types'
 
-type View = { tab: 'productos' | 'ajustes'; productId: string | null }
+type Tab = 'presupuestos' | 'catalogo' | 'clientes' | 'negocio'
+
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: 'presupuestos', label: 'Presup.', icon: '📄' },
+  { id: 'catalogo', label: 'Catálogo', icon: '📋' },
+  { id: 'clientes', label: 'Clientes', icon: '👤' },
+  { id: 'negocio', label: 'Negocio', icon: '🔧' },
+]
 
 export function Tool() {
   const { mode, notice } = useAccess()
@@ -29,217 +59,397 @@ export function Tool() {
   const toast = useToast()
   const { theme, toggle } = useTheme()
   const [data, setData] = useStored<AppData>('data', emptyData())
-  const [view, setView] = useState<View>({ tab: 'productos', productId: null })
-  const [toDelete, setToDelete] = useState<Product | null>(null)
+  const [tab, setTab] = useState<Tab>('presupuestos')
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [toDelete, setToDelete] = useState<Quote | null>(null)
+  const [busy, setBusy] = useState(false)
+  const migrated = useRef(false)
 
   // Normaliza una sola vez lo que había guardado (o lo que se importó).
   useEffect(() => {
+    if (migrated.current) return
+    migrated.current = true
     setData((d) => migrate(d))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setData])
+
+  // La copia de seguridad del kit también se lleva las imágenes de IndexedDB.
+  useEffect(() => {
+    registerBackupExtra({ collect: allImages, restore: (files) => restoreImages(files).then(() => {}) })
+    return () => registerBackupExtra(null)
   }, [])
 
-  const update = (fn: (d: AppData) => AppData) => setData(fn)
-  const product = data.products.find((p) => p.id === view.productId) ?? null
-  const summary = useMemo(
-    () => (product ? summarize(product, data.settings, data.channels) : null),
-    [product, data.settings, data.channels]
-  )
+  const { business, catalog, clients, quotes, templates } = data
+  const quote = quotes.find((q) => q.id === openId) ?? null
+  const client = quote ? (clients.find((c) => c.id === quote.clientId) ?? null) : null
 
-  const atLimit = data.products.length >= limits.maxProducts
+  const update = useCallback((fn: (d: AppData) => AppData) => setData(fn), [setData])
 
-  function createProduct() {
+  const patchBusiness = (patch: Partial<Business>) =>
+    update((d) => ({ ...d, business: { ...d.business, ...patch } }))
+
+  const patchQuote = (id: string, patch: Partial<Quote>) =>
+    update((d) => ({ ...d, quotes: d.quotes.map((q) => (q.id === id ? { ...q, ...patch } : q)) }))
+
+  const atLimit = quotes.length >= limits.maxRecords
+
+  /* ------------------------------ Presupuestos ------------------------------ */
+
+  function create(from?: Quote) {
     if (atLimit) {
-      toast(`La demo permite hasta ${limits.maxProducts} productos.`, 'danger')
+      toast(`La demo permite hasta ${limits.maxRecords} presupuestos.`, 'danger')
       return
     }
-    const p = newProduct()
-    update((d) => ({ ...d, products: [...d.products, p] }))
-    setView({ tab: 'productos', productId: p.id })
+    const next = from ?? newQuote(business, quotes)
+    update((d) => ({ ...d, quotes: [...d.quotes, next] }))
+    setTab('presupuestos')
+    setOpenId(next.id)
   }
 
-  function duplicateProduct(id: string) {
-    if (atLimit) {
-      toast(`La demo permite hasta ${limits.maxProducts} productos.`, 'danger')
-      return
-    }
-    update((d) => {
-      const src = d.products.find((p) => p.id === id)
-      if (!src) return d
-      const copy: Product = {
-        ...src,
-        id: uid(),
-        name: `${src.name} (copia)`,
-        createdAt: Date.now(),
-        materials: src.materials.map((m) => ({ ...m, id: uid() })),
-        extras: src.extras.map((e) => ({ ...e, id: uid() })),
-      }
-      return { ...d, products: [...d.products, copy] }
-    })
-    toast('Producto duplicado.')
-  }
-
-  function patchProduct(id: string, patch: Partial<Product>) {
+  function setStatus(id: string, status: Quote['status']) {
     update((d) => ({
       ...d,
-      products: d.products.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+      quotes: d.quotes.map((q) =>
+        q.id === id ? { ...q, status, statusAt: { ...q.statusAt, [status]: Date.now() } } : q
+      ),
+    }))
+    toast(`Marcado como ${STATUS_LABEL[status].toLowerCase()}.`)
+  }
+
+  function saveClient(next: Client) {
+    update((d) => ({
+      ...d,
+      clients: d.clients.some((c) => c.id === next.id)
+        ? d.clients.map((c) => (c.id === next.id ? next : c))
+        : [...d.clients, next],
     }))
   }
 
-  function printSheet() {
-    if (!limits.canPdf) {
-      toast('Descargar el PDF está disponible en la versión completa.', 'danger')
+  /** Suma al catálogo los ítems de los oficios elegidos que todavía no estén. */
+  function syncCatalog() {
+    const seeds = seedCatalog(business.trades, uid)
+    const have = new Set(catalog.map((i) => `${i.kind}|${i.name.toLowerCase()}`))
+    const missing = seeds.filter((s) => !have.has(`${s.kind}|${s.name.toLowerCase()}`))
+    if (!missing.length) {
+      toast('Ya tenías todos los ítems de tus oficios.')
       return
     }
-    window.print()
+    update((d) => ({ ...d, catalog: [...d.catalog, ...missing] }))
+    toast(`Agregamos ${missing.length} ítems al catálogo.`)
   }
+
+  /* --------------------------------- Salidas --------------------------------- */
+
+  /** Arma el PDF con el logo y las fotos ya resueltas desde IndexedDB. */
+  const makePdf = useCallback(
+    async (target: Quote, kind: 'presupuesto' | 'comprobante'): Promise<PdfResult | null> => {
+      setBusy(true)
+      try {
+        // En la demo no entran ni el logo ni las fotos.
+        const stored = limits.canImages ? await getImages(target.photoIds) : {}
+        const photos = target.photoIds.map((id) => stored[id]).filter(Boolean).slice(0, 3)
+        const logo = limits.canImages && business.logoId ? await getImage(business.logoId) : null
+        const build = kind === 'comprobante' ? buildReceiptPdf : buildQuotePdf
+        return await build({
+          quote: target,
+          business,
+          client: clients.find((c) => c.id === target.clientId) ?? null,
+          logo,
+          photos,
+          watermark: limits.pdfWatermark,
+        })
+      } catch {
+        toast('No pudimos armar el PDF. Probá de nuevo.', 'danger')
+        return null
+      } finally {
+        setBusy(false)
+      }
+    },
+    [business, clients, limits.canImages, limits.pdfWatermark, toast]
+  )
+
+  const actions = useMemo<QuoteActions | null>(() => {
+    if (!quote) return null
+    const currency = business.currency
+    return {
+      onDuplicate: () => {
+        if (atLimit) {
+          toast(`La demo permite hasta ${limits.maxRecords} presupuestos.`, 'danger')
+          return
+        }
+        const copy = duplicateQuote(quote, quotes, business.quotePrefix)
+        update((d) => ({ ...d, quotes: [...d.quotes, copy] }))
+        setOpenId(copy.id)
+        toast(`Duplicado como ${copy.number}.`)
+      },
+      onSaveTemplate: (name) => {
+        const template = templateFromQuote(quote, name)
+        update((d) => ({ ...d, templates: [...d.templates, template] }))
+        toast('Plantilla guardada.')
+      },
+      onDelete: () => setToDelete(quote),
+      onSendPdf: () => {
+        void (async () => {
+          const pdf = await makePdf(quote, 'presupuesto')
+          if (!pdf) return
+          const text = sendMessage(quote, business, client, currency)
+          const outcome = await sharePdf(
+            pdf.blob,
+            pdf.fileName,
+            `Presupuesto ${quote.number}`,
+            text,
+            limits.canShareFile
+          )
+          URL.revokeObjectURL(pdf.url)
+          if (outcome === 'downloaded') {
+            toast('Descargamos el PDF. Adjuntalo en el chat que acabamos de abrir.')
+            openWhatsApp(client?.phone ?? '', text)
+          }
+          if (outcome !== 'cancelled' && quote.status === 'borrador') setStatus(quote.id, 'enviado')
+        })()
+      },
+      onDownloadPdf: () => {
+        void (async () => {
+          const pdf = await makePdf(quote, 'presupuesto')
+          if (!pdf) return
+          downloadBlob(pdf.blob, pdf.fileName)
+          URL.revokeObjectURL(pdf.url)
+          toast('PDF descargado.')
+        })()
+      },
+      onCopySummary: () => {
+        void (async () => {
+          const ok = await copyText(quoteSummaryText(quote, business, client, currency))
+          toast(ok ? 'Resumen copiado: pegalo en WhatsApp.' : 'No pudimos copiar el texto.', ok ? 'ok' : 'danger')
+        })()
+      },
+      onFollowUp: () => openWhatsApp(client?.phone ?? '', followUpMessage(quote, business, client, currency)),
+      onReceipt: () => {
+        void (async () => {
+          const pdf = await makePdf(quote, 'comprobante')
+          if (!pdf) return
+          const text = `Hola${client?.name ? ` ${client.name.split(' ')[0]}` : ''}, te dejo el comprobante del trabajo ${quote.number}.`
+          const outcome = await sharePdf(
+            pdf.blob,
+            pdf.fileName,
+            `Comprobante ${quote.number}`,
+            text,
+            limits.canShareFile
+          )
+          URL.revokeObjectURL(pdf.url)
+          if (outcome === 'downloaded') toast('Comprobante descargado.')
+        })()
+      },
+      onAddToCatalog: (line: QuoteLine) => {
+        const item: CatalogItem = {
+          id: uid(),
+          kind: line.kind,
+          name: line.name.trim(),
+          unit: line.unit,
+          price: line.price,
+          category: line.kind === 'material' ? 'Materiales' : 'Mano de obra',
+        }
+        update((d) => ({ ...d, catalog: [...d.catalog, item] }))
+        toast('Guardado en tu catálogo.')
+        return item.id
+      },
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote, business, client, quotes, atLimit, limits, makePdf, update])
+
+  /* -------------------------------- Asistente -------------------------------- */
+
+  if (!data.onboarded) {
+    return (
+      <>
+        {mode === 'demo' ? <DemoBar /> : null}
+        <Onboarding
+          business={business}
+          onPatch={patchBusiness}
+          onFinish={() => {
+            const seeds = seedCatalog(business.trades, uid)
+            update((d) => ({
+              ...d,
+              onboarded: true,
+              catalog: d.catalog.length ? d.catalog : seeds,
+            }))
+            toast(
+              seeds.length
+                ? `Listo. Te dejamos ${seeds.length} ítems en el catálogo para ponerles precio.`
+                : 'Listo, ya podés presupuestar.'
+            )
+          }}
+        />
+      </>
+    )
+  }
+
+  /* ---------------------------------- App ---------------------------------- */
 
   return (
     <>
       {mode === 'demo' ? <DemoBar /> : null}
 
-      <div className="print:hidden">
-        <Header
-          right={
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggle}
-              aria-label={theme === 'dark' ? 'Usar modo claro' : 'Usar modo oscuro'}
-            >
-              {theme === 'dark' ? '☀️' : '🌙'}
-            </Button>
-          }
-        />
+      <Header
+        right={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggle}
+            aria-label={theme === 'dark' ? 'Usar modo claro' : 'Usar modo oscuro'}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </Button>
+        }
+      />
 
-        <main className="mx-auto w-full max-w-5xl px-3 pb-24 sm:px-4">
-          <InstallPrompt />
-          <BackupReminder hasData={data.products.length > 0} />
-          {notice ? (
-            <Banner tone="warn" className="mt-3">
-              {notice}
-            </Banner>
-          ) : null}
+      <main className="mx-auto w-full max-w-3xl px-3 pb-28 sm:px-4">
+        <InstallPrompt />
+        <BackupReminder hasData={quotes.length > 0} />
+        {notice ? (
+          <Banner tone="warn" className="mt-3">
+            {notice}
+          </Banner>
+        ) : null}
 
-          <nav className="mt-4 grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1" aria-label="Secciones">
-            {(
-              [
-                ['productos', 'Productos'],
-                ['ajustes', 'Ajustes'],
-              ] as const
-            ).map(([tab, label]) => (
-              <button
-                key={tab}
-                aria-current={view.tab === tab ? 'page' : undefined}
-                onClick={() => setView({ tab, productId: tab === 'ajustes' ? null : view.productId })}
-                className={cx(
-                  'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  view.tab === tab ? 'bg-surface text-ink shadow-xs' : 'text-muted hover:text-ink'
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </nav>
-
-          <div className="mt-4">
-            {view.tab === 'ajustes' ? (
-              <SettingsPanel data={data} update={update} />
-            ) : product && summary ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setView({ tab: 'productos', productId: null })}
-                  >
-                    ← Todos los productos
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={printSheet}
-                    title={limits.canPdf ? undefined : 'Disponible en la versión completa'}
-                  >
-                    Descargar PDF
-                  </Button>
-                </div>
-                <PricePanel
-                  product={product}
-                  settings={data.settings}
-                  summary={summary}
-                  onChange={(patch) => patchProduct(product.id, patch)}
-                />
-                <ProductEditor
-                  product={product}
-                  settings={data.settings}
-                  onChange={(patch) => patchProduct(product.id, patch)}
-                  onOpenSettings={() => setView({ tab: 'ajustes', productId: product.id })}
-                />
-                <div className="flex justify-end">
-                  <Button variant="danger" onClick={() => setToDelete(product)}>
-                    Borrar producto
-                  </Button>
-                </div>
-              </div>
+        <div className="mt-4">
+          {tab === 'presupuestos' ? (
+            quote && actions ? (
+              <QuoteEditor
+                quote={quote}
+                business={business}
+                catalog={catalog}
+                clients={clients}
+                onPatch={(patch) => patchQuote(quote.id, patch)}
+                onStatus={(status) => setStatus(quote.id, status)}
+                onClient={saveClient}
+                onBack={() => setOpenId(null)}
+                actions={actions}
+                busy={busy}
+              />
+            ) : quotes.length === 0 ? (
+              <EmptyState
+                onNew={() => create()}
+                canSample={!limits.isDemo}
+                onLoadSample={() => {
+                  const sample = sampleData()
+                  setData(sample)
+                  toast('Cargamos un ejemplo completo para que lo mires.')
+                }}
+              />
             ) : (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <h1 className="font-display text-xl font-bold">Tus productos</h1>
-                  <Button variant="primary" size="sm" onClick={createProduct} disabled={atLimit}>
-                    + Nuevo producto
-                  </Button>
-                </div>
+              <>
                 {atLimit ? (
-                  <Banner tone="info">
-                    La demo llega hasta {limits.maxProducts} productos. Con la versión completa no
+                  <Banner tone="info" className="mb-4">
+                    La demo llega hasta {limits.maxRecords} presupuestos. Con la versión completa no
                     hay límite.
                   </Banner>
                 ) : null}
-                {data.products.length === 0 ? (
-                  <EmptyState
-                    onCreate={createProduct}
-                    onLoadSample={() => {
-                      const sample = sampleData()
-                      setData(sample)
-                      setView({ tab: 'productos', productId: sample.products[0].id })
-                      toast('Cargamos un producto de ejemplo para que lo mires.')
-                    }}
-                  />
-                ) : (
-                  <ProductList
-                    data={data}
-                    onOpen={(id) => setView({ tab: 'productos', productId: id })}
-                    onDuplicate={duplicateProduct}
-                    onDelete={setToDelete}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        </main>
-      </div>
+                <QuoteList
+                  quotes={quotes}
+                  clients={clients}
+                  templates={templates}
+                  currency={business.currency}
+                  onOpen={setOpenId}
+                  onNew={() => create()}
+                  atLimit={atLimit}
+                  onFollowUp={(q) =>
+                    openWhatsApp(
+                      clients.find((c) => c.id === q.clientId)?.phone ?? '',
+                      followUpMessage(q, business, clients.find((c) => c.id === q.clientId) ?? null, business.currency)
+                    )
+                  }
+                  onFromTemplate={(t) => create(quoteFromTemplate(t, business, quotes))}
+                  onDeleteTemplate={(id) => {
+                    update((d) => ({ ...d, templates: d.templates.filter((t) => t.id !== id) }))
+                    toast('Plantilla borrada.')
+                  }}
+                />
+              </>
+            )
+          ) : null}
 
-      {/* Solo se ve al imprimir / guardar como PDF */}
-      {product && summary && limits.canPdf ? (
-        <div className="hidden print:block">
-          <ProductSheet product={product} settings={data.settings} summary={summary} />
+          {tab === 'catalogo' ? (
+            <CatalogPanel
+              catalog={catalog}
+              currency={business.currency}
+              onChange={(next) => update((d) => ({ ...d, catalog: next }))}
+            />
+          ) : null}
+
+          {tab === 'clientes' ? (
+            <ClientsPanel
+              clients={clients}
+              quotes={quotes}
+              onChange={(next) => update((d) => ({ ...d, clients: next }))}
+            />
+          ) : null}
+
+          {tab === 'negocio' ? (
+            <BusinessPanel
+              business={business}
+              onPatch={patchBusiness}
+              onSyncCatalog={syncCatalog}
+              catalogCount={catalog.length}
+            />
+          ) : null}
         </div>
-      ) : null}
+      </main>
+
+      {/* Navegación abajo: se usa con una mano, con el pulgar. */}
+      <nav
+        aria-label="Secciones"
+        className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+      >
+        <div className="mx-auto grid w-full max-w-3xl grid-cols-4">
+          {TABS.map((t) => {
+            const active = tab === t.id
+            return (
+              <button
+                key={t.id}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  setTab(t.id)
+                  if (t.id === 'presupuestos' && tab === 'presupuestos') setOpenId(null)
+                }}
+                className={cx(
+                  'flex min-h-16 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] font-semibold transition-colors',
+                  active ? 'text-brand' : 'text-muted hover:text-ink'
+                )}
+              >
+                <span className="text-xl leading-none" aria-hidden="true">
+                  {t.icon}
+                </span>
+                <span className="truncate">{t.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </nav>
 
       <Modal
         open={!!toDelete}
         onClose={() => setToDelete(null)}
-        title="Borrar producto"
+        title="Borrar presupuesto"
         footer={
           <>
             <Button onClick={() => setToDelete(null)}>Cancelar</Button>
             <Button
               variant="danger"
               onClick={() => {
-                const id = toDelete?.id
-                update((d) => ({ ...d, products: d.products.filter((p) => p.id !== id) }))
-                if (view.productId === id) setView({ tab: 'productos', productId: null })
+                const dead = toDelete
+                if (!dead) return
+                update((d) => {
+                  const quotes = d.quotes.filter((q) => q.id !== dead.id)
+                  // Las fotos que ya no referencia nadie se van de IndexedDB.
+                  void pruneImages([
+                    ...quotes.flatMap((q) => q.photoIds),
+                    ...(d.business.logoId ? [d.business.logoId] : []),
+                  ])
+                  return { ...d, quotes }
+                })
+                if (openId === dead.id) setOpenId(null)
                 setToDelete(null)
-                toast('Producto borrado.')
+                toast('Presupuesto borrado.')
               }}
             >
               Sí, borrar
@@ -248,7 +458,8 @@ export function Tool() {
         }
       >
         <p>
-          Vas a borrar <strong>{toDelete?.name || 'este producto'}</strong> y no se puede deshacer.
+          Vas a borrar <strong>{toDelete?.number}</strong> y no se puede deshacer. El número no se
+          vuelve a usar.
         </p>
       </Modal>
     </>

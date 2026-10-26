@@ -22,10 +22,11 @@
   --fl-ink: #0b1736; /* navy del logo */
   --fl-muted: #4a5a72;
 
-  /* Marca */
-  --fl-brand: #0b5ed7; /* azul de marca */
-  --fl-brand-strong: #0a4cb0;
-  --fl-brand-soft: #e3edfd;
+  /* Marca (Presupuestos usa el naranja de obra como acento; el resto es igual
+     que en Costos: mismas superficies, misma tinta navy, misma tipografía) */
+  --fl-brand: #b2510b; /* naranja de obra */
+  --fl-brand-strong: #8f4008;
+  --fl-brand-soft: #fdeedd;
   --fl-on-brand: #ffffff;
 
   /* Señal (menta del logo): destacados, nunca texto chico */
@@ -33,7 +34,7 @@
   --fl-on-signal: #0b1736;
 
   /* Degradado de marca (mismo recorrido que el isotipo) */
-  --fl-brand-gradient: linear-gradient(100deg, #0a4cb0 0%, #0b5ed7 38%, #00a8f0 70%, #10e0b8 100%);
+  --fl-brand-gradient: linear-gradient(100deg, #8f4008 0%, #b2510b 38%, #e08a2a 70%, #10e0b8 100%);
 
   /* Semánticos */
   --fl-ok: #04735d;
@@ -65,10 +66,10 @@
   --fl-ink: #eef3fa;
   --fl-muted: #9aa7bd;
 
-  --fl-brand: #4ea8ff;
-  --fl-brand-strong: #7cc0ff;
-  --fl-brand-soft: #11223f;
-  --fl-on-brand: #04142e;
+  --fl-brand: #ff9f4a;
+  --fl-brand-strong: #ffb878;
+  --fl-brand-soft: #30200f;
+  --fl-on-brand: #2a1403;
 
   --fl-signal: #25f0c0;
   --fl-on-signal: #0b1736;

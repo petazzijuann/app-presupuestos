@@ -51,10 +51,17 @@ export function useLimits() {
   return useMemo(
     () => ({
       isDemo,
-      maxProducts: isDemo ? config.demo.maxProducts : Infinity,
+      /** Tope de registros principales de la herramienta (acá: presupuestos). */
+      maxRecords: isDemo ? config.demo.maxRecords : Infinity,
       canExport: isDemo ? config.demo.allowExport : true,
       canImport: isDemo ? config.demo.allowImport : true,
       canPdf: isDemo ? config.demo.allowPdf : true,
+      /** Imágenes propias (logo, fotos del trabajo). */
+      canImages: isDemo ? config.demo.allowImages : true,
+      /** Compartir el archivo PDF con la Web Share API. */
+      canShareFile: isDemo ? config.demo.allowShareFile : true,
+      /** Texto de la marca de agua del PDF, o null si no corresponde. */
+      pdfWatermark: isDemo ? config.demo.pdfWatermark : null,
     }),
     [isDemo]
   )

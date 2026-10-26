@@ -11,32 +11,35 @@ const env = import.meta.env
 
 export const config = {
   /** Nombre comercial de la app (se ve en el header y en los PDF). */
-  appName: 'Costos',
+  appName: 'Presupuestos',
   /** Marca paraguas. */
   brand: 'Futurislabs',
   /** Una línea para la pantalla de activación. */
-  tagline: 'Calcula tu costo real y tu precio de venta, sin planillas.',
+  tagline: 'Presupuestos profesionales para tu oficio, desde el celular y en la obra.',
 
   /** Precio de venta mostrado en los botones de compra. */
   price: {
-    usd: env.VITE_PRICE_USD ?? 'US$ 19',
-    ars: env.VITE_PRICE_ARS ?? '$ 19.900',
+    usd: env.VITE_PRICE_USD ?? 'US$ 15',
+    ars: env.VITE_PRICE_ARS ?? '$ 15.900',
   },
 
   /** Link de pago en dólares (Lemon Squeezy). Si queda vacío, el botón se oculta. */
-  buyUrlUSD: env.VITE_BUY_URL_USD ?? 'https://futurislabs.lemonsqueezy.com/buy/costos',
+  buyUrlUSD: env.VITE_BUY_URL_USD ?? 'https://futurislabs.lemonsqueezy.com/buy/presupuestos',
   /** Link de pago en pesos (Ualá Bis). Si queda vacío, el botón se oculta. */
-  buyUrlARS: env.VITE_BUY_URL_ARS ?? 'https://link.uala.com.ar/futurislabs-costos',
+  buyUrlARS: env.VITE_BUY_URL_ARS ?? 'https://link.uala.com.ar/futurislabs-presupuestos',
 
   /** Soporte y landing. */
   supportEmail: 'hola@futurislabs.net',
-  landingUrl: 'https://futurislabs.net/costos',
+  landingUrl: 'https://futurislabs.net/presupuestos',
   /** Guía de uso: la abre el ítem "Ayuda" del menú, en una pestaña nueva. */
-  helpUrl: 'https://futurislabs.net/costos/guia/',
+  helpUrl: 'https://futurislabs.net/presupuestos/guia/',
   siteUrl: 'https://futurislabs.net',
 
+  /** Identificador del producto para las licencias (tiene que coincidir con PRODUCT_ID). */
+  productId: 'presupuestos',
+
   /** Prefijo de todas las claves de localStorage. Cambialo por microapp. */
-  storagePrefix: 'fl.costos',
+  storagePrefix: 'fl.presupuestos',
 
   /** Cantidad máxima de dispositivos por licencia. */
   maxDevices: 3,
@@ -51,10 +54,20 @@ export const config = {
 
   /** Límites del modo demo. */
   demo: {
-    maxProducts: 2,
+    /** Cuántos registros principales deja crear (acá: presupuestos). */
+    maxRecords: 2,
+    /** Cómo se llaman esos registros en los avisos. */
+    recordLabel: 'presupuestos',
     allowExport: false,
     allowImport: false,
-    allowPdf: false,
+    /** El PDF se genera igual, pero con marca de agua. */
+    allowPdf: true,
+    /** Logo del negocio y fotos del trabajo: solo en la versión completa. */
+    allowImages: false,
+    /** Compartir el archivo PDF: solo en la versión completa. */
+    allowShareFile: false,
+    /** Marca de agua diagonal en los PDF de la demo. */
+    pdfWatermark: 'DEMO · futurislabs.net',
   },
 
   /** Recordatorio de copia de seguridad. */

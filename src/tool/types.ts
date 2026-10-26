@@ -1,72 +1,142 @@
-/** HERRAMIENTA · Modelo de datos de la calculadora de costos. */
+/** HERRAMIENTA · Modelo de datos de los presupuestos. */
 import type { CurrencyCode } from './money'
 
-export type Material = {
+/** Oficios soportados: definen qué catálogo viene precargado. */
+export type TradeId =
+  | 'electricidad'
+  | 'plomeria'
+  | 'gas'
+  | 'pintura'
+  | 'albanileria'
+  | 'aire'
+  | 'carpinteria'
+
+/** Un ítem es material (lo que se compra) o mano de obra (lo que se trabaja). */
+export type ItemKind = 'material' | 'obra'
+
+export type UnitId = 'unidad' | 'metro' | 'm2' | 'hora' | 'jornada' | 'boca' | 'global'
+
+export type CatalogItem = {
   id: string
+  kind: ItemKind
   name: string
-  /** Cantidad usada por unidad producida. */
-  qty: number
-  /** Unidad de medida (g, ml, cm, unidades…). */
-  unit: string
-  /** Precio del paquete que comprás. */
-  packPrice: number
-  /** Cantidad que trae ese paquete, en la misma unidad. */
-  packQty: number
+  unit: UnitId
+  /** Precio unitario. 0 = todavía sin cargar. */
+  price: number
+  category: string
 }
 
-export type ExtraCost = {
+export type Client = {
   id: string
   name: string
-  /** Costo por unidad vendida. */
-  amount: number
+  phone: string
+  address: string
 }
 
-export type PricingMode = 'margin' | 'price'
+/** Condiciones por defecto que se copian a cada presupuesto nuevo. */
+export type Terms = {
+  /** Días que el presupuesto mantiene el precio. */
+  validityDays: number
+  payment: string
+  /** Seña pedida, en % del total. */
+  depositPercent: number
+  warranty: string
+  /** Plazo estimado de ejecución. */
+  leadTime: string
+  /** Notas al pie del PDF. */
+  footer: string
+}
 
-export type Product = {
-  id: string
+export type Business = {
   name: string
-  notes: string
-  materials: Material[]
-  /** Minutos de trabajo por unidad. */
-  laborMinutes: number
-  extras: ExtraCost[]
-  pricingMode: PricingMode
-  /** Margen deseado sobre el precio, en % (modo A). */
-  targetMargin: number
-  /** Precio que quieres cobrar (modo B). */
-  targetPrice: number
-  createdAt: number
-}
-
-export type FixedCost = {
-  id: string
-  name: string
-  /** Importe mensual. */
-  amount: number
-}
-
-export type Settings = {
+  trades: TradeId[]
+  /** Clave del logo en IndexedDB (las imágenes no van en localStorage). */
+  logoId: string | null
+  phone: string
+  email: string
+  area: string
+  /** CUIT / RUT / RFC… opcional. */
+  taxId: string
   currency: CurrencyCode
-  fixedCosts: FixedCost[]
-  /** Unidades que vendes por mes (estimado), para prorratear los costos fijos. */
-  unitsPerMonth: number
-  /** Cuánto vale tu hora de trabajo. */
-  hourlyRate: number
+  /** Prefijo de la numeración, por ejemplo "P-". */
+  quotePrefix: string
+  terms: Terms
+  /** IVA: apagado por defecto (la mayoría son monotributistas). */
+  vat: { enabled: boolean; percent: number }
 }
 
-export type Channel = {
+export type QuoteLine = {
+  id: string
+  kind: ItemKind
+  name: string
+  unit: UnitId
+  qty: number
+  price: number
+  /** De qué ítem del catálogo salió (vacío si es un ítem libre). */
+  catalogId?: string
+}
+
+export type QuoteStatus = 'borrador' | 'enviado' | 'aceptado' | 'rechazado' | 'terminado' | 'cobrado'
+
+export type DiscountKind = 'percent' | 'amount'
+
+export type Quote = {
+  id: string
+  /** Número ya armado, por ejemplo "P-0007". */
+  number: string
+  /** Fecha del presupuesto en formato YYYY-MM-DD. */
+  date: string
+  createdAt: number
+  validityDays: number
+  clientId: string | null
+  /** Dirección de la obra (puede no ser la del cliente). */
+  address: string
+  description: string
+  lines: QuoteLine[]
+  discountKind: DiscountKind
+  discountValue: number
+  vatEnabled: boolean
+  vatPercent: number
+  depositPercent: number
+  leadTime: string
+  payment: string
+  warranty: string
+  notes: string
+  /** Claves de las fotos en IndexedDB (hasta 3). */
+  photoIds: string[]
+  status: QuoteStatus
+  /** Cuándo entró en cada estado (para el seguimiento a los 3 días). */
+  statusAt: Partial<Record<QuoteStatus, number>>
+  /** Lo efectivamente cobrado, si difiere del total (comprobante de trabajo). */
+  collected?: number
+}
+
+/** Una plantilla es un presupuesto sin cliente, guardado con nombre. */
+export type Template = {
   id: string
   name: string
-  /** Comisión sobre el precio de venta, en %. */
-  feePercent: number
-  /** Costo fijo por venta (envío, costo por operación…). */
-  feeFixed: number
-  enabled: boolean
+  createdAt: number
+  quote: Pick<
+    Quote,
+    | 'description'
+    | 'lines'
+    | 'discountKind'
+    | 'discountValue'
+    | 'depositPercent'
+    | 'leadTime'
+    | 'payment'
+    | 'warranty'
+    | 'notes'
+    | 'validityDays'
+  >
 }
 
 export type AppData = {
-  settings: Settings
-  products: Product[]
-  channels: Channel[]
+  business: Business
+  catalog: CatalogItem[]
+  clients: Client[]
+  quotes: Quote[]
+  templates: Template[]
+  /** false mientras no se completó el asistente de 3 pasos. */
+  onboarded: boolean
 }

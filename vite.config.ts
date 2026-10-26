@@ -17,10 +17,10 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//],
       },
       manifest: {
-        name: 'Costos · Futurislabs',
-        short_name: 'Costos',
+        name: 'Presupuestos · Futurislabs',
+        short_name: 'Presupuestos',
         description:
-          'Calculá el costo real y el precio de venta de tus productos. Funciona sin internet.',
+          'Presupuestos profesionales para tu oficio: catálogo de precios, PDF con tu logo y envío por WhatsApp. Funciona sin internet.',
         lang: 'es',
         dir: 'ltr',
         start_url: '/',
@@ -28,7 +28,7 @@ export default defineConfig({
         display: 'standalone',
         orientation: 'portrait',
         background_color: '#080c14',
-        theme_color: '#080c14',
+        theme_color: '#b2510b',
         categories: ['business', 'productivity', 'finance'],
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
