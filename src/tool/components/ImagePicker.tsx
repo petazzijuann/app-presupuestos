@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useLimits } from '../../kit/access'
 import { Button, useToast } from '../../kit/ui'
 import {
+  ImageError,
   LOGO_MAX_SIDE,
   MAX_PHOTOS,
   PHOTO_MAX_SIDE,
@@ -33,6 +34,10 @@ export function useStoredImage(id: string | null | undefined): string | null {
   return src
 }
 
+/** Muestra el motivo real del fallo: si no, no hay forma de saber qué pasó. */
+const motivo = (e: unknown, fallback: string) =>
+  e instanceof ImageError ? e.message : fallback
+
 /* --------------------------------- Logo --------------------------------- */
 
 export function LogoPicker({
@@ -48,22 +53,23 @@ export function LogoPicker({
   const [busy, setBusy] = useState(false)
 
   async function choose() {
-    if (!limits.canImages) {
-      toast('El logo está disponible en la versión completa.', 'danger')
-      return
-    }
+    if (!limits.canImages) return
     const [file] = await pickImages()
     if (!file) return
     setBusy(true)
     try {
-      const { dataUrl } = await compressImage(file, LOGO_MAX_SIDE, 0.9)
+      const { dataUrl } = await compressImage(file, {
+        maxSide: LOGO_MAX_SIDE,
+        quality: 0.9,
+        keepAlpha: true,
+      })
       const id = uid()
       await putImage(id, dataUrl)
       if (logoId) void deleteImage(logoId)
       onChange(id)
       toast('Logo guardado.')
-    } catch {
-      toast('No pudimos usar esa imagen. Probá con una foto o un PNG.', 'danger')
+    } catch (e) {
+      toast(motivo(e, 'No pudimos usar esa imagen. Probá con un JPG o un PNG.'), 'danger')
     } finally {
       setBusy(false)
     }
@@ -83,7 +89,12 @@ export function LogoPicker({
           )}
         </div>
         <div className="flex min-w-0 flex-wrap gap-2">
-          <Button size="sm" onClick={() => void choose()} disabled={busy}>
+          <Button
+            size="sm"
+            onClick={() => void choose()}
+            disabled={busy || !limits.canImages}
+            title={limits.canImages ? undefined : 'Disponible en la versión completa'}
+          >
             {busy ? 'Guardando…' : src ? 'Cambiar' : 'Subir logo'}
           </Button>
           {src ? (
@@ -102,8 +113,8 @@ export function LogoPicker({
       </div>
       <p className="mt-1 text-xs text-muted">
         {limits.canImages
-          ? 'Se comprime solo y sale en el PDF, arriba a la izquierda.'
-          : 'En la demo el PDF sale sin logo.'}
+          ? 'Se comprime solo y sale en el PDF, arriba a la izquierda. JPG o PNG.'
+          : 'En la demo no se puede subir el logo: el PDF sale sin él. Con la versión completa, sí.'}
       </p>
     </div>
   )
@@ -124,10 +135,7 @@ export function PhotoStrip({
   const full = photoIds.length >= MAX_PHOTOS
 
   async function add() {
-    if (!limits.canImages) {
-      toast('Las fotos están disponibles en la versión completa.', 'danger')
-      return
-    }
+    if (!limits.canImages) return
     if (full) {
       toast(`Hasta ${MAX_PHOTOS} fotos por presupuesto.`, 'danger')
       return
@@ -138,15 +146,17 @@ export function PhotoStrip({
     const next = [...photoIds]
     try {
       for (const file of files.slice(0, MAX_PHOTOS - photoIds.length)) {
-        const { dataUrl } = await compressImage(file, PHOTO_MAX_SIDE)
+        const { dataUrl } = await compressImage(file, { maxSide: PHOTO_MAX_SIDE })
         const id = uid()
         await putImage(id, dataUrl)
         next.push(id)
       }
       onChange(next)
       toast(next.length - photoIds.length === 1 ? 'Foto agregada.' : 'Fotos agregadas.')
-    } catch {
-      toast('No pudimos guardar esa foto.', 'danger')
+    } catch (e) {
+      // Lo que se alcanzó a guardar antes del error no se pierde.
+      if (next.length > photoIds.length) onChange(next)
+      toast(motivo(e, 'No pudimos guardar esa foto.'), 'danger')
     } finally {
       setBusy(false)
     }
@@ -161,7 +171,12 @@ export function PhotoStrip({
             ({photoIds.length}/{MAX_PHOTOS})
           </span>
         </span>
-        <Button size="sm" onClick={() => void add()} disabled={busy || full}>
+        <Button
+          size="sm"
+          onClick={() => void add()}
+          disabled={busy || full || !limits.canImages}
+          title={limits.canImages ? undefined : 'Disponible en la versión completa'}
+        >
           {busy ? 'Guardando…' : '+ Foto'}
         </Button>
       </div>
@@ -169,7 +184,7 @@ export function PhotoStrip({
         <p className="text-xs text-muted">
           {limits.canImages
             ? 'Sacá una foto del problema o del trabajo terminado: van al final del PDF.'
-            : 'Las fotos están disponibles en la versión completa.'}
+            : 'En la demo no se pueden agregar fotos. Con la versión completa, sí.'}
         </p>
       ) : (
         <ul className="grid grid-cols-3 gap-2">

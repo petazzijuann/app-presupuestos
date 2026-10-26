@@ -17,13 +17,21 @@ export const LOGO_MAX_SIDE = 480
 /** Tope de fotos por presupuesto. */
 export const MAX_PHOTOS = 3
 
+/** Error con un mensaje que se le puede mostrar al usuario tal cual. */
+export class ImageError extends Error {}
+
 let dbPromise: Promise<IDBDatabase> | null = null
 
 function openDB(): Promise<IDBDatabase> {
   if (!dbPromise) {
     const opening = new Promise<IDBDatabase>((resolve, reject) => {
       if (typeof indexedDB === 'undefined') {
-        reject(new Error('Este navegador no guarda imágenes.'))
+        reject(
+          new ImageError(
+            'Este navegador no puede guardar imágenes. Si estás en una ventana privada, ' +
+              'abrí la app en una normal.'
+          )
+        )
         return
       }
       const req = indexedDB.open(DB_NAME, 1)
@@ -31,7 +39,16 @@ function openDB(): Promise<IDBDatabase> {
         if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE)
       }
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error ?? new Error('No pudimos abrir el almacén de imágenes.'))
+      req.onerror = () =>
+        reject(
+          new ImageError(
+            'No pudimos abrir el almacén de imágenes. Suele pasar en ventanas privadas: ' +
+              'abrí la app en una pestaña normal.'
+          )
+        )
+      // Safari puede dejar la apertura colgada si hay otra pestaña bloqueándola.
+      req.onblocked = () =>
+        reject(new ImageError('Cerrá las otras pestañas de la app y volvé a intentar.'))
     })
     // Si falla, se olvida la promesa para poder reintentar en el próximo uso.
     dbPromise = opening.catch((e: unknown) => {
@@ -54,8 +71,19 @@ function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequ
   )
 }
 
-export const putImage = (id: string, dataUrl: string): Promise<unknown> =>
-  tx('readwrite', (s) => s.put(dataUrl, id))
+export async function putImage(id: string, dataUrl: string): Promise<void> {
+  try {
+    await tx('readwrite', (s) => s.put(dataUrl, id))
+  } catch (e) {
+    if (e instanceof ImageError) throw e
+    const name = e instanceof DOMException ? e.name : ''
+    throw new ImageError(
+      name === 'QuotaExceededError'
+        ? 'No queda espacio en el celular para más imágenes. Borrá alguna foto vieja y probá de nuevo.'
+        : 'No pudimos guardar la imagen en este navegador.'
+    )
+  }
+}
 
 export async function getImage(id: string): Promise<string | null> {
   try {
@@ -126,21 +154,65 @@ export async function pruneImages(keep: string[]): Promise<void> {
 
 /* ----------------------------- Compresión ----------------------------- */
 
-const readAsDataURL = (file: Blob): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(new Error('No pudimos leer la imagen.'))
-    reader.readAsDataURL(file)
-  })
+/**
+ * Decodifica el archivo elegido.
+ *
+ * Primero con `createImageBitmap`, que en el celular entiende más formatos
+ * (HEIC en iPhone, AVIF) y no necesita pasar la foto entera a base64. Si no
+ * está o falla, se cae al `<img>` de toda la vida con un object URL, que
+ * gasta mucha menos memoria que un data URL de 12 megapíxeles.
+ */
+async function decode(file: Blob): Promise<{
+  source: CanvasImageSource
+  width: number
+  height: number
+  close: () => void
+}> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file)
+      if (bitmap.width > 0 && bitmap.height > 0) {
+        return {
+          source: bitmap,
+          width: bitmap.width,
+          height: bitmap.height,
+          close: () => bitmap.close(),
+        }
+      }
+      bitmap.close()
+    } catch {
+      /* formato que este navegador no sabe decodificar así: probamos con <img> */
+    }
+  }
 
-const loadImage = (src: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('El archivo no parece una imagen.'))
-    img.src = src
-  })
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () =>
+        reject(
+          new ImageError(
+            'Tu navegador no pudo abrir ese archivo. Si la foto es HEIC (iPhone), ' +
+              'sacale una captura de pantalla o guardala como JPG y probá de nuevo.'
+          )
+        )
+      el.src = url
+    })
+    // Un SVG sin tamaño propio se decodifica en 0×0 y saldría un logo en blanco.
+    const width = img.naturalWidth || img.width
+    const height = img.naturalHeight || img.height
+    if (!width || !height) {
+      throw new ImageError(
+        'Esa imagen no tiene un tamaño definido. Probá con un PNG o un JPG en vez de un SVG.'
+      )
+    }
+    return { source: img, width, height, close: () => URL.revokeObjectURL(url) }
+  } catch (e) {
+    URL.revokeObjectURL(url)
+    throw e
+  }
+}
 
 export type CompressedImage = {
   dataUrl: string
@@ -151,50 +223,88 @@ export type CompressedImage = {
 }
 
 /**
- * Reduce la foto al lado máximo pedido y la pasa a JPEG. Una foto de celular
- * de 4 MB queda en unos 150–250 kB, que es lo que entra en un PDF y en la
- * copia de seguridad sin que pese de más.
+ * Reduce la imagen al lado máximo pedido. Una foto de celular de 4 MB queda en
+ * unos 150–250 kB, que es lo que entra en un PDF y en la copia de seguridad sin
+ * que pese de más.
+ *
+ * `keepAlpha` guarda PNG para no perder la transparencia (el logo); el resto va
+ * en JPEG, que para una foto pesa una fracción.
  */
 export async function compressImage(
   file: File | Blob,
-  maxSide = PHOTO_MAX_SIDE,
-  quality = 0.78
+  { maxSide = PHOTO_MAX_SIDE, quality = 0.78, keepAlpha = false } = {}
 ): Promise<CompressedImage> {
-  const original = await readAsDataURL(file)
-  const img = await loadImage(original)
-  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight))
-  const width = Math.max(1, Math.round(img.naturalWidth * scale))
-  const height = Math.max(1, Math.round(img.naturalHeight * scale))
+  if (!file.size) throw new ImageError('Ese archivo está vacío.')
 
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Este navegador no puede comprimir imágenes.')
+  const img = await decode(file)
+  try {
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+    const width = Math.max(1, Math.round(img.width * scale))
+    const height = Math.max(1, Math.round(img.height * scale))
 
-  const transparent = /^data:image\/(png|webp|gif|svg)/i.test(original)
-  const keepAlpha = transparent && maxSide === LOGO_MAX_SIDE
-  if (!keepAlpha) {
-    // Fondo blanco: un PNG transparente pasado a JPEG queda negro.
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, width, height)
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new ImageError('Este navegador no puede achicar imágenes.')
+
+    // Solo tiene sentido conservar alfa si el archivo de origen lo trae.
+    const alpha = keepAlpha && /png|webp|gif|svg/i.test((file as File).type || '')
+    if (!alpha) {
+      // Fondo blanco: un PNG transparente pasado a JPEG queda negro.
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, width, height)
+    }
+    ctx.drawImage(img.source, 0, 0, width, height)
+
+    const dataUrl = alpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality)
+    // En iOS un canvas demasiado grande sale en blanco y toDataURL devuelve casi nada.
+    if (!dataUrl.startsWith('data:image/') || dataUrl.length < 128) {
+      throw new ImageError('No pudimos procesar esa imagen. Probá con una foto más chica.')
+    }
+    return { dataUrl, width, height, bytes: Math.round((dataUrl.length * 3) / 4) }
+  } finally {
+    img.close()
   }
-  ctx.drawImage(img, 0, 0, width, height)
-
-  // El logo conserva PNG para no perder la transparencia; las fotos van en JPEG.
-  const dataUrl = keepAlpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality)
-  return { dataUrl, width, height, bytes: Math.round((dataUrl.length * 3) / 4) }
 }
 
-/** Abre la cámara o la galería y devuelve los archivos elegidos. */
+/**
+ * Abre la cámara o la galería y devuelve los archivos elegidos.
+ *
+ * El input va adjunto al documento a propósito: en Safari de iPhone y en varios
+ * navegadores Android un input suelto no dispara `change`, así que el usuario
+ * elegía la foto y no pasaba nada.
+ */
 export function pickImages(multiple = false): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = 'image/*'
     input.multiple = multiple
-    input.onchange = () => resolve(Array.from(input.files ?? []))
-    input.oncancel = () => resolve([])
+    // Fuera de la vista, pero dentro del documento.
+    input.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none'
+    document.body.appendChild(input)
+
+    let done = false
+    const finish = (files: File[]) => {
+      if (done) return
+      done = true
+      window.removeEventListener('focus', onFocus)
+      input.remove()
+      resolve(files)
+    }
+
+    // Respaldo de cancelación: `oncancel` no existe en todos los navegadores y
+    // sin esto la promesa quedaba colgada para siempre. Se leen igual los
+    // archivos por si el `change` llega después del `focus`; el margen es para
+    // los que vienen de Drive o de la nube y tardan en materializarse.
+    function onFocus() {
+      setTimeout(() => finish(Array.from(input.files ?? [])), 2500)
+    }
+
+    input.onchange = () => finish(Array.from(input.files ?? []))
+    input.oncancel = () => finish([])
+    window.addEventListener('focus', onFocus, { once: true })
     input.click()
   })
 }
